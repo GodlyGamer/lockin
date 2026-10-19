@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: CoreKit tests
+        run: swift test --package-path Packages/CoreKit
+
+  ios-build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version (must be 26 or later)
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          xcodebuild -version
+          major=$(xcodebuild -version | head -1 | awk '{print $2}' | cut -d. -f1)
+          echo "Xcode major version: $major"
+          if [ "$major" -lt 26 ]; then
+            echo "::error::Xcode $major is below 26"
+            exit 1
+          fi
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Archive (unsigned)
+        run: |
+          mkdir -p build
+          xcodebuild -project LockIn.xcodeproj -scheme LockIn -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -archivePath build/LockIn.xcarchive archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: .*(deprecated|unavailable)|BUILD|ARCHIVE" || true
+          test -d build/LockIn.xcarchive/Products/Applications/LockIn.app
+
+      - name: Compiler facts for DESIGN.md §11
+        if: always()
+        run: |
+          echo "default isolation flag:"; grep -o -m1 -- "-default-isolation[= ][A-Za-z]*" build/xcodebuild.log || echo "not found"
+          echo "swift version:"; xcrun swift --version
+
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R build/LockIn.xcarchive/Products/Applications/LockIn.app Payload/
+          zip -qry LockIn.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LockIn.ipa
+          path: LockIn.ipa
+          if-no-files-found: error

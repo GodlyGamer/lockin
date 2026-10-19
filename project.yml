@@ -1,0 +1,49 @@
+name: LockIn
+options:
+  bundleIdPrefix: com.youssoufdiallo
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en-GB
+
+packages:
+  CoreKit:
+    path: Packages/CoreKit
+
+targets:
+  LockIn:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: App
+        excludes:
+          - "Resources/Info.plist"
+    dependencies:
+      - package: CoreKit
+        product: CoreKit
+    settings:
+      base:
+        PRODUCT_NAME: LockIn
+        PRODUCT_BUNDLE_IDENTIFIER: com.youssoufdiallo.lockin
+        INFOPLIST_FILE: App/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
+
+schemes:
+  LockIn:
+    build:
+      targets:
+        LockIn: all
+    archive:
+      config: Release
