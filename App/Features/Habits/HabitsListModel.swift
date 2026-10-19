@@ -6,6 +6,7 @@ nonisolated struct HabitsRowModel: Identifiable {
     let habit: Habit
     let subtitle: String
     let mark: Mark?
+    let scheduled: Bool
 }
 
 nonisolated struct HabitsSectionModel: Identifiable {
@@ -36,7 +37,8 @@ enum HabitsListBuilder {
             parts.append("this week \(score.done)/\(score.setPoint)")
             if streak > 0 { parts.append("\(streak)-week streak") }
             let mark: Mark? = habit.isArchived ? nil : snapshot.log(habitID: habit.id, day: today)?.mark
-            return HabitsRowModel(id: habit.id, habit: habit, subtitle: parts.joined(separator: " · "), mark: mark)
+            return HabitsRowModel(id: habit.id, habit: habit, subtitle: parts.joined(separator: " · "), mark: mark,
+                                scheduled: HabitEngine.isScheduled(habit, on: today))
         }
 
         func sorted(_ habits: [Habit]) -> [Habit] {

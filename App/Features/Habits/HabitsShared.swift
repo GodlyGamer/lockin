@@ -4,29 +4,6 @@ import CoreKit
 // Helpers shared by the Habits, Today and Week folders (module M4). Everything here is prefixed `Habits…`
 // so it cannot clash with another module's names (one Swift module for the whole app).
 
-/// The haptic for a mark event (DESIGN.md §8.4): D `.success`, B light impact, M or cleared `.selection`.
-enum HabitsHaptic {
-    case done
-    case bad
-    case selection
-
-    init(mark: Mark?) {
-        switch mark {
-        case .some(.D): self = .done
-        case .some(.B): self = .bad
-        case .some(.M), .none: self = .selection
-        }
-    }
-
-    var feedback: SensoryFeedback {
-        switch self {
-        case .done: return .success
-        case .bad: return .impact(weight: .light)
-        case .selection: return .selection
-        }
-    }
-}
-
 /// Plain-language names for marks.
 enum HabitsMarkText {
     static func name(_ mark: Mark) -> String {

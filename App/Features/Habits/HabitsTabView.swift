@@ -88,6 +88,7 @@ struct HabitsTabView: View {
         return HabitRow(title: habit.title,
                         subtitle: row.subtitle,
                         mark: row.mark,
+                        scheduled: row.scheduled,
                         onTapMark: { router.sheet = .markHabit(habit.id, today) },
                         onTapRow: { router.push(.habitEditor(habit.id)) })
             .buttonStyle(.plain)

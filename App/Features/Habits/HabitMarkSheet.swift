@@ -15,7 +15,7 @@ struct HabitMarkSheet: View {
     @State private var countTask: Task<Void, Never>?
     @State private var saveFailed = false
     @State private var isClosing = false
-    @State private var haptic = HabitsHaptic.selection
+    @State private var haptic = HapticEvent.mMarkedOrCleared
     @State private var hapticTick = 0
 
     init(habitID: UUID, day: LocalDay) {
@@ -38,7 +38,7 @@ struct HabitMarkSheet: View {
         }
         .presentationDetents([.height(detentHeight)])
         .presentationDragIndicator(.visible)
-        .sensoryFeedback(haptic.feedback, trigger: hapticTick)
+        .haptic(haptic, trigger: hapticTick)
         .onAppear { syncCount() }
         .onDisappear { flushCount() }
     }
@@ -274,7 +274,7 @@ struct HabitMarkSheet: View {
 
     // MARK: - Writing marks
 
-    private func fire(_ event: HabitsHaptic) {
+    private func fire(_ event: HapticEvent) {
         haptic = event
         hapticTick += 1
     }
@@ -291,7 +291,7 @@ struct HabitMarkSheet: View {
             return
         }
         saveFailed = false
-        fire(HabitsHaptic(mark: mark))
+        fire(HapticEvent.forMark(mark))
         closeAndReschedule()
     }
 
@@ -309,7 +309,7 @@ struct HabitMarkSheet: View {
         }
         saveFailed = false
         count = 0
-        fire(HabitsHaptic(mark: nil))
+        fire(HapticEvent.forMark(nil))
         closeAndReschedule()
     }
 
@@ -357,7 +357,7 @@ struct HabitMarkSheet: View {
         }
         saveFailed = false
         countDirty = false
-        fire(HabitsHaptic(mark: mark))
+        fire(HapticEvent.forMark(mark))
         Task { await services.notifications.reschedule() }
     }
 

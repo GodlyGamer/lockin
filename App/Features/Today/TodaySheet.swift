@@ -63,7 +63,7 @@ struct TodaySheet: View {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     if index > 0 {
                         Rectangle()
-                            .fill(Color.white.opacity(0.06))
+                            .fill(Color.rowSeparator)
                             .frame(height: 1)
                     }
                     row(item, day: day, showTime: showTime)
