@@ -145,8 +145,8 @@ struct GoalsDashboardView: View {
             GoalsBannerCard(systemImage: "checklist",
                             title: text,
                             iconTint: Color.cobaltText,
-                            fill: Color.cobalt.opacity(0.10),
-                            stroke: Color.cobaltText.opacity(0.28),
+                            fill: Color.cobaltBannerFill,
+                            stroke: Color.cobaltBannerStroke,
                             showsChevron: true)
         }
         .buttonStyle(.plain)
@@ -180,7 +180,8 @@ struct GoalsDashboardView: View {
                                label: score.dashboardLabel,
                                state: gaugeState(score.dashboardState),
                                lowLabel: "0",
-                               highLabel: "\(score.schedOcc)")
+                               highLabel: "\(score.schedOcc)",
+                               accessibilityText: "This week, \(score.doneOcc) of \(score.schedOcc) done, set point \(score.setOcc), \(score.dashboardState == .behind ? "behind" : "on track")")
         let daysLeft = max(0, today.days(to: goal.deadline))
         let index = ordered.firstIndex { $0.id == goal.id } ?? 0
 

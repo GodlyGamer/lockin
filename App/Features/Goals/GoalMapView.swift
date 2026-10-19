@@ -200,7 +200,7 @@ struct GoalMapView: View {
             Button {
                 onSelect(node.id)
             } label: {
-                MapNode(title: title, state: state, dashed: dashed)
+                MapNode(title: title, state: state, dashed: dashed, kind: kindName(node.kind))
                     .frame(width: width)
             }
             .buttonStyle(.plain)
@@ -212,7 +212,6 @@ struct GoalMapView: View {
                     )
                 }
             }
-            .accessibilityLabel(accessibilityText(node, title: title, state: state))
             if let lateDays {
                 Text(GoalsFormat.startsLate(lateDays))
                     .font(.caption2)
@@ -249,22 +248,13 @@ struct GoalMapView: View {
         }
     }
 
-    private func accessibilityText(_ node: MapLayout.Node, title: String, state: MapNodeState) -> String {
-        let type: String
-        switch node.kind {
-        case .goal: type = "Goal"
-        case .principle: type = "Principle"
-        case .system: type = "System"
-        case .objective: type = "Milestone"
+    private func kindName(_ kind: MapLayout.NodeKind) -> String {
+        switch kind {
+        case .goal: "Goal"
+        case .principle: "Principle"
+        case .system: "System"
+        case .objective: "Milestone"
         }
-        let stateText: String
-        switch state {
-        case .onTrack: stateText = ", on track"
-        case .behind: stateText = ", behind"
-        case .done: stateText = ", done"
-        case .neutral: stateText = ""
-        }
-        return "\(type): \(title)\(stateText)"
     }
 }
 

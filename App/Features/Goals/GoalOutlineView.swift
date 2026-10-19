@@ -107,7 +107,7 @@ struct GoalOutlineView: View {
         .sheet(item: $sheet) { item in
             sheetContent(item)
         }
-        .sensoryFeedback(.selection, trigger: tick)
+        .haptic(.outlineReorder, trigger: tick)
     }
 
     // MARK: Toolbar
