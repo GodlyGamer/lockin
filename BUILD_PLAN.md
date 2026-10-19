@@ -11,6 +11,9 @@ Ground rules for every agent:
 - iOS views read services with `@Environment(AppServices.self) private var services` and `@Environment(Router.self) private var router`. Views re-render on data changes by reading `services.store.revision` in `body` (the store is `@Observable`), then derive what they need from `services.store.snapshot()`.
 - Every view gets a `#Preview` that uses `AppServices.preview()` and `Router()`.
 - Never use `Material`, `.blur` as glass, custom tab bars, `.toolbarBackground` colours or `UITabBarAppearance` (DESIGN.md §8.7 "Banned").
+- **The whole app is one Swift module**, so two files declaring the same name break the build. Every helper that is not one of your brief's public types must be `private`/`fileprivate`, or carry your module's prefix (`Habits…`, `Week…`, `Today…`, `Goals…`, `Calendar…` → use `Cal…`, `Persistence…`, `Shell…`, `Notif…`). Only M3 may add internal extensions on `Color`, `Font`, `View`, `ShapeStyle`; everyone else uses `private extension`. Never redeclare CoreKit or SwiftUI names (`Goal`, `Habit`, `Week`, `Step`, `Mark`, `Store`, `Tab`, `Gauge`…).
+- Shared helpers already in `App/Shared` (use them, do not copy them): `ClaudeHandoff.send(_:router:)` (clipboard + `claude://` + fallback toast) and `LockInFormat` ("Mon 19 Oct", "07:30", title full stop, frequency badge, weekday letters).
+- Feature-local sheets (editors, pickers) may be presented with a local `.sheet` inside your own views; the cross-feature sheets go through `router.sheet`.
 
 ---
 
