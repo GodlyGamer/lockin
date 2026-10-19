@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -22,8 +25,17 @@ jobs:
 
   ios-build:
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select newest Xcode 26 (best effort)
+        run: |
+          latest=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "$latest" ]; then
+            echo "Selecting $latest"
+            sudo xcode-select -s "$latest/Contents/Developer"
+          fi
 
       - name: Xcode version (must be 26 or later)
         run: |
@@ -46,17 +58,25 @@ jobs:
       - name: Archive (unsigned)
         run: |
           mkdir -p build
+          set +e
           xcodebuild -project LockIn.xcodeproj -scheme LockIn -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' \
             -archivePath build/LockIn.xcarchive archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: .*(deprecated|unavailable)|BUILD|ARCHIVE" || true
+            > build/xcodebuild.log 2>&1
+          status=$?
+          set -e
+          grep -E "error:|warning: .*(deprecated|unavailable)|\*\* (BUILD|ARCHIVE)" build/xcodebuild.log || true
+          if [ "$status" -ne 0 ]; then
+            echo "::error::xcodebuild exited with status $status"
+            exit "$status"
+          fi
           test -d build/LockIn.xcarchive/Products/Applications/LockIn.app
 
       - name: Compiler facts for DESIGN.md §11
         if: always()
         run: |
-          echo "default isolation flag:"; grep -o -m1 -- "-default-isolation[= ][A-Za-z]*" build/xcodebuild.log || echo "not found"
+          echo "default isolation:"; grep -o -m3 -E -- "-default-isolation[= ]?[A-Za-z]*|SWIFT_DEFAULT_ACTOR_ISOLATION[^ ]*" build/xcodebuild.log || echo "not found"
           echo "swift version:"; xcrun swift --version
 
       - name: Package IPA
@@ -70,3 +90,10 @@ jobs:
           name: LockIn.ipa
           path: LockIn.ipa
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore
