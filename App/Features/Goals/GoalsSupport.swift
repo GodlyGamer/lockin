@@ -99,12 +99,12 @@ enum GoalsOrdering {
 
     /// Upserts for `items` (already in their new order) whose `sortIndex` has to change.
     static func reassign<T>(_ items: [T], index: WritableKeyPath<T, Int>, wrap: (T) -> AnyEntity) -> [AnyEntity] {
-        let slots = slots(from: items.map { $0[keyPath: index] }, count: items.count)
+        let newValues = GoalsOrdering.slots(from: items.map { $0[keyPath: index] }, count: items.count)
         var upserts: [AnyEntity] = []
         for (offset, item) in items.enumerated() {
-            guard item[keyPath: index] != slots[offset] else { continue }
+            guard item[keyPath: index] != newValues[offset] else { continue }
             var copy = item
-            copy[keyPath: index] = slots[offset]
+            copy[keyPath: index] = newValues[offset]
             upserts.append(wrap(copy))
         }
         return upserts
@@ -243,8 +243,12 @@ struct GoalsBannerCard: View {
 
 /// Solid capsule buttons for in-content actions. (The only prominent glass button is the toolbar "New goal".)
 struct GoalsSolidButtonStyle: ButtonStyle {
-    var prominent = true
+    var prominent: Bool
     @Environment(\.isEnabled) private var isEnabled
+
+    init(prominent: Bool = true) {
+        self.prominent = prominent
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -435,6 +439,12 @@ struct GoalsEditorChrome: ViewModifier {
     let canSave: Bool
     let onSave: () -> Void
     @Environment(\.dismiss) private var dismiss
+
+    init(title: String, canSave: Bool, onSave: @escaping () -> Void) {
+        self.title = title
+        self.canSave = canSave
+        self.onSave = onSave
+    }
 
     func body(content: Content) -> some View {
         content
