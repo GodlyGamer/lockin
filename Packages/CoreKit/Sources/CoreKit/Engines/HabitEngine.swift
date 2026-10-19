@@ -85,8 +85,13 @@ public enum HabitEngine {
     /// Whether `habit` appears in Today on `day` (F1.1–1.2): scheduled, not archived, and for perWeek habits
     /// still short of n D/B marks before `day` in that week (a habit marked on `day` itself still shows).
     public static func isDue(_ habit: Habit, on day: LocalDay, logs: [HabitLog]) -> Bool {
-        // M1: implement (§4.6, F1.2).
-        !habit.isArchived && isScheduled(habit, on: day)
+        guard !habit.isArchived, isScheduled(habit, on: day) else { return false }
+        guard case .perWeek(let n) = habit.frequency else { return true }
+        let weekStart = Week(containing: day).start
+        let doneBefore = logs.filter {
+            $0.habitID == habit.id && $0.day >= weekStart && $0.day < day && isDoneOrBad($0.mark)
+        }.count
+        return doneBefore < n
     }
 
     /// The mark derived from a count (§3.7): count ≥ target → D; ≥ badDayTarget → B; otherwise M.
@@ -98,46 +103,140 @@ public enum HabitEngine {
 
     /// The mark shown for `habit` on `day`: the logged mark; `.M` for a scheduled, unlogged occurrence in a finished
     /// day (computed, never stored; not for perWeek habits); nil when not scheduled or still open.
+    ///
+    /// A day is finished once the 04:00 rule has moved on from it (`day < logicalDay(for: now)`), so at 01:30 on
+    /// Tuesday Monday is still open for marking.
     public static func mark(for habit: Habit, on day: LocalDay, logs: [HabitLog], now: Date) -> Mark? {
-        // M1: implement (§3.7).
-        logs.first { $0.habitID == habit.id && $0.day == day }?.mark
+        if let log = logs.first(where: { $0.habitID == habit.id && $0.day == day }) { return log.mark }
+        if habit.isArchived { return nil }
+        if case .perWeek = habit.frequency { return nil }
+        guard isScheduled(habit, on: day) else { return nil }
+        return day < logicalDay(for: now) ? .M : nil
     }
 
     public static func weekScore(habit: Habit, week: Week, logs: [HabitLog]) -> HabitWeekScore {
-        // M1: implement (§4.6).
-        HabitWeekScore(habitID: habit.id, scheduled: scheduledPerWeek(habit), done: 0, bad: 0,
-                       setPoint: habit.setPointPerWeek, hit: false, badDayFlag: false)
+        let scheduled = scheduledPerWeek(habit)
+        var doneOrBad = 0
+        var bad = 0
+        for log in logs where log.habitID == habit.id && week.contains(log.day) {
+            if isDoneOrBad(log.mark) { doneOrBad += 1 }
+            if log.mark == .B { bad += 1 }
+        }
+        // perWeek habits are capped at n (§4.6); the same cap keeps a weekdays habit marked on an off-day within its
+        // scheduled count, so gauges never exceed 100 %.
+        let done = min(doneOrBad, scheduled)
+        let badCount = min(bad, done)
+        return HabitWeekScore(habitID: habit.id, scheduled: scheduled, done: done, bad: badCount,
+                              setPoint: habit.setPointPerWeek, hit: done >= habit.setPointPerWeek,
+                              badDayFlag: done >= 2 && badCount > done / 2)
     }
 
     /// `habits` may include other goals' and archived habits; only this goal's non-archived ones count.
     public static func goalWeekScore(goal: Goal, habits: [Habit], week: Week, logs: [HabitLog], now: Date,
                                      settings: AppSettings) -> GoalWeekScore {
-        // M1: implement (§4.6, expectedSoFar).
-        GoalWeekScore(goalID: goal.id, onTarget: 0, total: 0, doneOcc: 0, schedOcc: 0, setOcc: 0, expectedSoFar: 0, habits: [])
+        let goalHabits = habits.filter { $0.goalID == goal.id && !$0.isArchived }
+        let scores = goalHabits.map { weekScore(habit: $0, week: week, logs: logs) }
+        let elapsed = elapsedDays(in: week, now: now, settings: settings)
+        let expected = goalHabits.reduce(0.0) { $0 + expectedCount($1, elapsed: elapsed) }
+        return GoalWeekScore(goalID: goal.id,
+                             onTarget: scores.filter(\.hit).count,
+                             total: scores.count,
+                             doneOcc: scores.reduce(0) { $0 + $1.done },
+                             schedOcc: scores.reduce(0) { $0 + $1.scheduled },
+                             setOcc: scores.reduce(0) { $0 + $1.setPoint },
+                             expectedSoFar: Int((expected + 1e-9).rounded(.down)),
+                             habits: scores)
     }
 
     /// Consecutive finished weeks, ending with the week before `currentWeek`, where every habit hit its set point.
+    /// A goal with no (non-archived) habits has no streak.
     public static func goalStreak(goal: Goal, habits: [Habit], logs: [HabitLog], currentWeek: Week) -> Int {
-        // M1: implement (§4.6).
-        0
+        let goalHabits = habits.filter { $0.goalID == goal.id && !$0.isArchived }
+        return streak(habits: goalHabits, logs: logs, currentWeek: currentWeek)
     }
 
     /// Consecutive finished weeks, ending with the week before `currentWeek`, where the habit hit.
     public static func habitStreak(habit: Habit, logs: [HabitLog], currentWeek: Week) -> Int {
-        // M1: implement (§4.6).
-        0
+        streak(habits: [habit], logs: logs, currentWeek: currentWeek)
     }
 
     /// The habit with the lowest done / setPoint in `week`; ties → lower priority number, then earlier sortIndex.
+    /// Archived habits are never suggested.
     public static func suggestedBottleneck(habits: [Habit], week: Week, logs: [HabitLog]) -> UUID? {
-        // M1: implement (§4.6).
-        nil
+        var best: (habit: Habit, done: Int, setPoint: Int)?
+        for habit in habits where !habit.isArchived {
+            let score = weekScore(habit: habit, week: week, logs: logs)
+            let setPoint = max(score.setPoint, 1)
+            guard let current = best else {
+                best = (habit, score.done, setPoint)
+                continue
+            }
+            // Compare done/setPoint without floating point: a/b < c/d ⇔ a·d < c·b.
+            let lhs = score.done * current.setPoint
+            let rhs = current.done * setPoint
+            if lhs < rhs || (lhs == rhs && (habit.priority, habit.sortIndex) < (current.habit.priority, current.habit.sortIndex)) {
+                best = (habit, score.done, setPoint)
+            }
+        }
+        return best?.habit.id
     }
 
     /// Map colour for a system: onTrack if every habit has done ≥ its pro-rata expected count this week; neutral with no habits.
+    /// The expected count is ⌊setPoint × elapsed / scheduled⌋, with `elapsed` as in the goal's `expectedSoFar`.
     public static func systemStatus(systemID: UUID, habits: [Habit], week: Week, logs: [HabitLog], now: Date,
                                     settings: AppSettings) -> ProgressState {
-        // M1: implement (§4.6).
-        .neutral
+        let systemHabits = habits.filter { $0.systemID == systemID && !$0.isArchived }
+        guard !systemHabits.isEmpty else { return .neutral }
+        let elapsed = elapsedDays(in: week, now: now, settings: settings)
+        let onTrack = systemHabits.allSatisfy { habit in
+            let expected = Int((expectedCount(habit, elapsed: elapsed) + 1e-9).rounded(.down))
+            return weekScore(habit: habit, week: week, logs: logs).done >= expected
+        }
+        return onTrack ? .onTrack : .behind
+    }
+
+    // MARK: - Helpers
+
+    private static func isDoneOrBad(_ mark: Mark) -> Bool { mark == .D || mark == .B }
+
+    /// Days of `week` that count as elapsed for pro-rata maths: days before today, plus today once `eveningTime` has passed.
+    private static func elapsedDays(in week: Week, now: Date, settings: AppSettings) -> [LocalDay] {
+        let today = LocalDay(now)
+        let pastEvening = TimeOfDay.minutes(of: now) >= settings.eveningTime
+        return week.days.filter { $0 < today || ($0 == today && pastEvening) }
+    }
+
+    /// setPoint × elapsed / scheduled (§4.6), before flooring.
+    private static func expectedCount(_ habit: Habit, elapsed: [LocalDay]) -> Double {
+        let scheduled = scheduledPerWeek(habit)
+        guard scheduled > 0 else { return 0 }
+        let elapsedOccurrences: Double
+        switch habit.frequency {
+        case .daily:
+            elapsedOccurrences = Double(elapsed.count)
+        case .weekdays(let days):
+            let set = Set(days)
+            elapsedOccurrences = Double(elapsed.filter { set.contains($0.weekday) }.count)
+        case .perWeek(let n):
+            elapsedOccurrences = Double(n) * Double(elapsed.count) / 7
+        }
+        return Double(habit.setPointPerWeek) * elapsedOccurrences / Double(scheduled)
+    }
+
+    /// Consecutive weeks before `currentWeek` in which every habit hit. Stops at the first miss, and never looks
+    /// further back than the earliest log (a week with no marks can't be on target).
+    private static func streak(habits: [Habit], logs: [HabitLog], currentWeek: Week) -> Int {
+        guard !habits.isEmpty else { return 0 }
+        let ids = Set(habits.map(\.id))
+        let relevant = logs.filter { ids.contains($0.habitID) }
+        guard let earliest = relevant.map(\.day).min() else { return 0 }
+        var count = 0
+        var week = currentWeek.previous
+        while week.end >= earliest {
+            guard habits.allSatisfy({ weekScore(habit: $0, week: week, logs: relevant).hit }) else { break }
+            count += 1
+            week = week.previous
+        }
+        return count
     }
 }
