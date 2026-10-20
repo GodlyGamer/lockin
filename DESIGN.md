@@ -959,26 +959,28 @@ Single target, no extensions: a free Apple ID is limited in the number of app ID
 
 ## 11. Open decisions and assumptions
 
-| # | Item | Recommendation |
-|---|---|---|
-| O1 | [OPEN] App name and bundle ID | "Lock in", `com.youssoufdiallo.lockin`. Never change the bundle ID after the first install. |
-| O2 | [OPEN] Today strip as a tab bar accessory | Use `.tabViewBottomAccessory`, falling back to the top row of the Goals list. |
-| O3 | [OPEN] Default best hours | As in §3.12; the user edits them in onboarding. |
-| O4 | [OPEN] Public vs private GitHub repo | Public (no personal data in the repo) for free CI minutes. |
-| V1 | [VERIFY] Liquid Glass API names (`.glassProminent` inside a toolbar, `ToolbarSpacer`, `.tabViewBottomAccessory`) on the SDK the runner has | Build as written; replace with the SDK's names if the compile fails. |
-| V2 | [VERIFY] Whether Xcode 27 is on the `macos-26` runner | Not needed: target iOS 26.0 and use no iOS 27-only API. |
-| V3 | [VERIFY] Claude app URL scheme | Try `claude://`; the clipboard plus toast is the fallback either way. |
-| V4 | [VERIFY] Reading `ExpirationDate` from `embedded.mobileprovision` on a Sideloadly-signed build | Show "Unknown" and skip the warning if it fails. |
-| V5 | [VERIFY] Sideloadly's bundle-ID option keeps the ID unchanged | Keep it off; confirm the installed app's container survives a re-sign (data still there). |
-| V6 | [VERIFY] Scheduled notifications fire while the app is expired | If they do, the re-sign notification still reaches the user; if not, the banner is the warning. |
-| V7 | [VERIFY] Writing backups to an iCloud Drive folder without the iCloud capability | Fall back to "On My iPhone" if it fails. |
-| V8 | [VERIFY] Free Apple ID app-ID and active-app limits | Single target, no extensions. |
-| V9 | [VERIFY] Hidden calendars still sync through EventKit | Expected yes; the onboarding tip depends on it. |
-| V10 | [VERIFY] `SWIFT_DEFAULT_ACTOR_ISOLATION` build setting name | If absent, mark view models `@MainActor` explicitly. |
-| V11 | [VERIFY] Free macOS CI minutes for private repos | See O4. |
-| A1 | Assumption: one user, one device, one time zone (Europe/London); week starts Monday | |
-| A2 | Assumption: the user's goal-system prompt in Claude is updated with Appendix A so plans end in valid JSON | |
-| A3 | Assumption: the uni timetable is a subscribed calendar in Apple Calendar (read-only) | |
+Answers recorded 2026-10-20 from the first green CI build (GitHub `macos-26` runner, Xcode 26.6 build 17F113, Swift 6.3.3, iPhoneOS 26.5 SDK). "Device" means only the phone can settle it.
+
+| # | Item | Recommendation | Answer |
+|---|---|---|---|
+| O1 | [OPEN] App name and bundle ID | "Lock in", `com.youssoufdiallo.lockin`. Never change the bundle ID after the first install. | Decided: built as "Lock in" (`CFBundleDisplayName`), bundle ID `com.youssoufdiallo.lockin`. |
+| O2 | [OPEN] Today strip as a tab bar accessory | Use `.tabViewBottomAccessory`, falling back to the top row of the Goals list. | Decided: `.tabViewBottomAccessory` compiles (see V1), so the fallback row is not used. |
+| O3 | [OPEN] Default best hours | As in §3.12; the user edits them in onboarding. | Decided: defaults as in §3.12, editable in onboarding and Settings. |
+| O4 | [OPEN] Public vs private GitHub repo | Public (no personal data in the repo) for free CI minutes. | Decided: public repo `GodlyGamer/lockin`. |
+| V1 | [VERIFY] Liquid Glass API names (`.glassProminent` inside a toolbar, `ToolbarSpacer`, `.tabViewBottomAccessory`) on the SDK the runner has | Build as written; replace with the SDK's names if the compile fails. | **Settled by the compiler.** `.tabViewBottomAccessory`, `ToolbarSpacer(.fixed, placement:)`, `.buttonStyle(.glassProminent)`, `.buttonStyle(.glass)`, `GlassEffectContainer` and `.glassEffectID(_:in:)` all compile unchanged against the iOS 26.5 SDK. **Device:** whether the New goal button *looks* prominent inside the toolbar. |
+| V2 | [VERIFY] Whether Xcode 27 is on the `macos-26` runner | Not needed: target iOS 26.0 and use no iOS 27-only API. | **Settled by CI.** The `macos-26` image has Xcode 26.0 through 26.6 (default 26.6) and no Xcode 27. CI selects the newest Xcode 26; the app targets iOS 26.0 and uses no iOS 27 API. |
+| V3 | [VERIFY] Claude app URL scheme | Try `claude://`; the clipboard plus toast is the fallback either way. | **Device.** `claude` is listed in `LSApplicationQueriesSchemes`; the clipboard + toast fallback ships either way. |
+| V4 | [VERIFY] Reading `ExpirationDate` from `embedded.mobileprovision` on a Sideloadly-signed build | Show "Unknown" and skip the warning if it fails. | **Device.** Reader implemented as specified (M2 `ProvisioningSigningInfo`); it returns nil and Settings shows "Unknown" on any failure. |
+| V5 | [VERIFY] Sideloadly's bundle-ID option keeps the ID unchanged | Keep it off; confirm the installed app's container survives a re-sign (data still there). | **Device.** |
+| V6 | [VERIFY] Scheduled notifications fire while the app is expired | If they do, the re-sign notification still reaches the user; if not, the banner is the warning. | **Device.** |
+| V7 | [VERIFY] Writing backups to an iCloud Drive folder without the iCloud capability | Fall back to "On My iPhone" if it fails. | **Device.** Backups use a security-scoped bookmark from the folder picker and plain atomic writes; restore reads through `NSFileCoordinator`. |
+| V8 | [VERIFY] Free Apple ID app-ID and active-app limits | Single target, no extensions. | **Device / Apple account.** Not stated in Apple's developer docs; the app stays a single target with no extensions. |
+| V9 | [VERIFY] Hidden calendars still sync through EventKit | Expected yes; the onboarding tip depends on it. | **Device.** |
+| V10 | [VERIFY] `SWIFT_DEFAULT_ACTOR_ISOLATION` build setting name | If absent, mark view models `@MainActor` explicitly. | **Settled by the compiler.** `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` is the right name: Xcode 26.6 passes `-default-isolation=MainActor` to every app compile. `SWIFT_APPROACHABLE_CONCURRENCY = YES` adds `InferIsolatedConformances` and `NonisolatedNonsendingByDefault`. |
+| V11 | [VERIFY] Free macOS CI minutes for private repos | See O4. | **Settled by GitHub's billing docs.** macOS jobs use private-repo minutes at 10× the Linux rate; standard runners are free for public repos. Moot, as the repo is public (O4). |
+| A1 | Assumption: one user, one device, one time zone (Europe/London); week starts Monday | |  |
+| A2 | Assumption: the user's goal-system prompt in Claude is updated with Appendix A so plans end in valid JSON | |  |
+| A3 | Assumption: the uni timetable is a subscribed calendar in Apple Calendar (read-only) | |  |
 
 ---
 
