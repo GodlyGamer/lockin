@@ -54,8 +54,13 @@ public struct LocalDay: Hashable, Comparable, Codable, Sendable, CustomStringCon
 
     /// The instant at `minutes` after local midnight on this day.
     public func date(minutes: Int = 0) -> Date {
-        let midnight = Calendar.lockIn.date(from: DateComponents(year: year, month: month, day: day))!
-        return Calendar.lockIn.date(byAdding: .minute, value: minutes, to: midnight)!
+        // Wall-clock arithmetic: adding minutes to midnight would be off by an hour on the two clock-change days.
+        // Minutes outside 0..<1440 roll into neighbouring days (1440 = the next midnight).
+        var hours = minutes / 60
+        var remainder = minutes % 60
+        if remainder < 0 { remainder += 60; hours -= 1 }
+        let components = DateComponents(year: year, month: month, day: day, hour: hours, minute: remainder)
+        return Calendar.lockIn.date(from: components)!
     }
 
     public func adding(days: Int) -> LocalDay {

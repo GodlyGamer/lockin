@@ -86,14 +86,101 @@ public enum PromptBuilder {
     /// Appendix B. `busy == nil` → "Busy times: not available (calendar access off)". Busy times are merged, clipped to
     /// 06:00–24:00, one line per day for the next 14 days from `now`; never titles or locations.
     public static func intakePrompt(answers: IntakeAnswers, busy: [BusyInterval]?, settings: AppSettings, now: Date) -> String {
-        // M1: implement (Appendix B, §4.3).
-        "New goal for my goal system.\n\nGoal: \(answers.goal)"
+        func text(_ value: String) -> String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "—" : trimmed
+        }
+        func list(_ values: [String]) -> String { values.isEmpty ? "—" : values.joined(separator: ", ") }
+
+        let today = LocalDay(now)
+        var lines = [
+            "New goal for my goal system. Use my method: work backwards to first principles, one system per principle, one sustaining system, and a DAG of milestones with deadlines. Grill me on anything you still need first, then give the plan and finish with the Lock in plan JSON (schema v1).",
+            "",
+            "Goal: \(text(answers.goal))",
+            "Measured by: \(answers.resultName) (\(answers.unit)). Now: \(CoreFormat.number(answers.current)). Target: \(CoreFormat.number(answers.target)). Deadline: \(answers.deadline.string).",
+            "Tried before: \(text(answers.triedBefore))",
+            "Resources: \(text(answers.resources))",
+            "Hard limits: \(text(answers.hardLimits))",
+            "Why it matters: \(text(answers.whyItMatters))",
+            "Hours a week: \(answers.hoursPerWeek)",
+            "Best times: \(list(answers.bestTimes.map(\.label)))",
+            "Best places: \(list(answers.bestPlaces))",
+            "Saturdays off for goal work: \(answers.saturdaysOff ? "yes" : "no") (physical activity still fine)",
+            "What usually makes me stop: \(list(answers.stoppers))",
+            "Smallest bad-day version: \(text(answers.badDayVersion))",
+            "Today: \(CoreFormat.dayMonthYear(today))",
+        ]
+        if let busy {
+            lines.append("Busy times, next 14 days (06:00–24:00, titles hidden):")
+            for offset in 0..<14 {
+                let day = today.adding(days: offset)
+                lines.append("\(CoreFormat.dayMonth(day)): \(busyText(on: day, busy: busy))")
+            }
+        } else {
+            lines.append("Busy times: not available (calendar access off)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// "09:00–11:00, 13:00–15:00" or "free": the day's busy time clipped to 06:00–24:00 and merged.
+    private static func busyText(on day: LocalDay, busy: [BusyInterval]) -> String {
+        let dayStart = day.date(minutes: 360)
+        let dayEnd = day.date(minutes: 1440)
+        let clipped = busy.compactMap { interval -> (start: Date, end: Date)? in
+            let start = max(interval.start, dayStart)
+            let end = min(interval.end, dayEnd)
+            return start < end ? (start: start, end: end) : nil
+        }
+        func clock(_ date: Date) -> String { date == dayEnd ? "24:00" : CoreFormat.time(date) }
+        let parts = CoreFormat.merged(clipped).map { "\(clock($0.start))–\(clock($0.end))" }
+        return parts.isEmpty ? "free" : parts.joined(separator: ", ")
     }
 
     /// Appendix C for one goal and one finished week, including the goal rebuilt as plan JSON.
+    ///
+    /// The result is the week's own review value ("—" if none was entered). "Bottleneck I picked" is the week's
+    /// review pick, else the goal's, else the suggestion. The plan JSON carries one-off blocks from the end of `week` on.
     public static func checkInPrompt(goalID: UUID, snapshot: StoreSnapshot, week: Week) -> String {
-        // M1: implement (Appendix C).
-        "Weekly check-in"
+        guard let goal = snapshot.goal(goalID) else { return "Weekly check-in: goal not found." }
+        let settings = snapshot.settings
+        let review = snapshot.weekReview(goalID: goalID, week: week)
+        // A moment after the week, so every day in it counts as finished.
+        let afterWeek = week.next.start.date(minutes: 720)
+        let habits = snapshot.activeHabits(goalID: goalID)
+        let score = HabitEngine.goalWeekScore(goal: goal, habits: snapshot.habits, week: week, logs: snapshot.logs,
+                                              now: afterWeek, settings: settings)
+        let streak = HabitEngine.goalStreak(goal: goal, habits: snapshot.habits, logs: snapshot.logs, currentWeek: week.next)
+        let unit = goal.resultUnit
+
+        let value = review?.resultValue.map { CoreFormat.number($0) + unit } ?? "—"
+        var lines = [
+            "Weekly check-in for goal \"\(goal.title)\" (goalId: \(goal.id.uuidString)). Week \(CoreFormat.shortDayMonth(week.start))–\(CoreFormat.shortDayMonth(week.end)).",
+            "Result: \(goal.resultName) \(value) (target \(CoreFormat.number(goal.resultTarget))\(unit), start \(CoreFormat.number(goal.resultStart))\(unit)).",
+            "Scorecard (D = done, B = bad-day version, M = missed, - = not scheduled):",
+        ]
+        for habit in habits {
+            let marks = week.days.map { day in
+                HabitEngine.mark(for: habit, on: day, logs: snapshot.logs, now: afterWeek)?.rawValue ?? "-"
+            }.joined()
+            let habitScore = HabitEngine.weekScore(habit: habit, week: week, logs: snapshot.logs)
+            var line = "\(habit.title): \(marks) — \(habitScore.done)/\(habitScore.setPoint)"
+            if habitScore.badDayFlag { line += " — FLAG: \(habitScore.bad) of \(habitScore.done) were B" }
+            lines.append(line)
+        }
+
+        let pickedID = review?.bottleneckHabitID ?? goal.bottleneckHabitID
+            ?? HabitEngine.suggestedBottleneck(habits: habits, week: week, logs: snapshot.logs)
+        let picked = pickedID.flatMap { id in habits.first { $0.id == id }?.title ?? snapshot.habit(id)?.title } ?? "—"
+        let note = review?.note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let planJSON = PlanV1.rebuilt(goalID: goalID, snapshot: snapshot, oneOffsFrom: week.next.start)?.jsonString() ?? "{}"
+        lines += [
+            "On target: \(score.onTarget) of \(score.total). Streak: \(streak) weeks. Bottleneck I picked: \(picked).",
+            "Note: \(note.isEmpty ? "—" : note)",
+            "Current plan JSON (keep keys the same):",
+            planJSON,
+            "Redesign anything flagged or below set point, then finish with the full updated plan JSON (schema v1, same goalId and keys).",
+        ]
+        return lines.joined(separator: "\n")
     }
 
     /// Appendix A text, verbatim (Settings → Claude → "Copy prompt add-on").

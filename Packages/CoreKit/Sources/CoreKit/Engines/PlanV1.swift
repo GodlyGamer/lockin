@@ -208,13 +208,107 @@ public struct PlanV1: Codable, Equatable, Sendable {
 extension PlanV1 {
     /// Rebuilds a stored goal as schema v1 (for the check-in prompt, Appendix C). Keys are the entities' `planKey`s;
     /// entities without one get a generated key. Archived habits are left out. nil if the goal doesn't exist.
+    ///
+    /// Everything of the goal comes back: principles, systems, objectives (a deadline only when overridden), steps,
+    /// habits, every block rule (active or not, so a re-import never deletes one), reminders, and one-off blocks that
+    /// are scheduled or clashing and start today or later.
     public init?(goalID: UUID, snapshot: StoreSnapshot) {
-        // M1: implement.
+        guard let plan = PlanV1.rebuilt(goalID: goalID, snapshot: snapshot, oneOffsFrom: .today) else { return nil }
+        self = plan
+    }
+
+    /// `oneOffsFrom` is the first day whose one-off blocks are included.
+    static func rebuilt(goalID: UUID, snapshot: StoreSnapshot, oneOffsFrom: LocalDay) -> PlanV1? {
         guard let goal = snapshot.goal(goalID) else { return nil }
-        self.init(goal: GoalSpec(id: goal.id.uuidString, key: goal.planKey ?? "g", title: goal.title, outcome: goal.outcome,
-                                 deadline: goal.deadline.string, bufferDays: goal.bufferDays,
-                                 result: ResultSpec(name: goal.resultName, unit: goal.resultUnit,
-                                                    start: goal.resultStart, target: goal.resultTarget)))
+        let principles = snapshot.firstPrinciples(goalID: goalID)
+        let systems = snapshot.systems(goalID: goalID)
+        let objectives = snapshot.objectives(goalID: goalID)
+        let objectiveOrder = Dictionary(objectives.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let steps = snapshot.steps.filter { objectiveOrder[$0.objectiveID] != nil }
+            .sorted { (objectiveOrder[$0.objectiveID]!, $0.sortIndex) < (objectiveOrder[$1.objectiveID]!, $1.sortIndex) }
+        let habits = snapshot.activeHabits(goalID: goalID)
+        let systemIDs = Set(systems.map(\.id))
+        let rules = snapshot.blockRules.filter { systemIDs.contains($0.systemID) }
+        let oneOffs = snapshot.blocks
+            .filter { block in
+                block.ruleID == nil && block.goalID == goalID && (block.status == .scheduled || block.status == .clash)
+                    && block.day >= oneOffsFrom && block.systemID.map(systemIDs.contains) == true
+            }
+            .sorted { $0.start < $1.start }
+        let reminders = snapshot.reminders.filter { $0.systemID.map(systemIDs.contains) == true }
+
+        let principleKey = PlanKeys.uniqueKeys(principles, id: \.id, key: PlanKeys.principle)
+        let systemKey = PlanKeys.uniqueKeys(systems, id: \.id, key: PlanKeys.system)
+        let objectiveKey = PlanKeys.uniqueKeys(objectives, id: \.id, key: PlanKeys.objective)
+        let stepKey = PlanKeys.uniqueKeys(steps, id: \.id, key: PlanKeys.step)
+        let habitKey = PlanKeys.uniqueKeys(habits, id: \.id, key: PlanKeys.habit)
+        let reminderKey = PlanKeys.uniqueKeys(reminders, id: \.id, key: PlanKeys.reminder)
+        // Rules and one-off blocks share the `blocks` list, so their keys must be unique together.
+        var blockKey = PlanKeys.uniqueKeys(rules, id: \.id, key: PlanKeys.rule)
+        let usedBlockKeys = Set(blockKey.values)
+        for (id, key) in PlanKeys.uniqueKeys(oneOffs, id: \.id, key: PlanKeys.block) {
+            blockKey[id] = usedBlockKeys.contains(key) ? key + "-1" : key
+        }
+
+        func clock(_ minutes: Int) -> String { TimeOfDay.format(min(max(minutes, 0), 1439)) }
+
+        let goalSpec = GoalSpec(id: goal.id.uuidString, key: goal.planKey ?? "g", title: goal.title, outcome: goal.outcome,
+                                deadline: goal.deadline.string, bufferDays: goal.bufferDays,
+                                result: ResultSpec(name: goal.resultName, unit: goal.resultUnit,
+                                                   start: goal.resultStart, target: goal.resultTarget))
+
+        let principleSpecs = principles.map { PrincipleSpec(key: principleKey[$0.id]!, title: $0.title, why: $0.why) }
+        let systemSpecs = systems.map { system in
+            SystemSpec(key: systemKey[system.id]!,
+                       firstPrinciple: system.kind == .sustaining ? nil : system.firstPrincipleID.flatMap { principleKey[$0] },
+                       kind: system.kind.rawValue, title: system.title, location: system.location)
+        }
+        let objectiveSpecs = objectives.map { objective in
+            ObjectiveSpec(key: objectiveKey[objective.id]!, title: objective.title, estimatedDays: objective.estimatedDays,
+                          dependsOn: objective.dependsOnIDs.compactMap { objectiveKey[$0] },
+                          systems: objective.systemIDs.compactMap { systemKey[$0] },
+                          deadline: objective.deadlineOverridden ? objective.deadline?.string : nil)
+        }
+        let stepSpecs = steps.map { step in
+            StepSpec(key: stepKey[step.id]!, objective: objectiveKey[step.objectiveID]!, title: step.title,
+                     estimatedMinutes: step.estimatedMinutes, deadline: step.deadline?.string)
+        }
+        let habitSpecs = habits.map { habit -> HabitSpec in
+            let frequency: FrequencySpec
+            switch habit.frequency {
+            case .daily:
+                frequency = FrequencySpec(type: "daily")
+            case .weekdays(let days):
+                frequency = FrequencySpec(type: "weekdays", weekdays: CoreFormat.sortedUnique(days))
+            case .perWeek(let n):
+                frequency = FrequencySpec(type: "perWeek", timesPerWeek: n, preferredWeekdays: habit.preferredWeekdays)
+            }
+            return HabitSpec(key: habitKey[habit.id]!, system: habit.systemID.flatMap { systemKey[$0] }, title: habit.title,
+                             badDayTitle: habit.badDayTitle, kind: habit.kind.rawValue, target: habit.target,
+                             badDayTarget: habit.badDayTarget, unit: habit.unit, frequency: frequency,
+                             setPointPerWeek: habit.setPointPerWeek, reminderTime: habit.reminderTime.map(clock),
+                             durationMinutes: habit.durationMinutes, isPhysical: habit.isPhysical, priority: habit.priority)
+        }
+        var blockSpecs = rules.map { rule in
+            BlockSpec(key: blockKey[rule.id]!, system: systemKey[rule.systemID]!, title: rule.title,
+                      durationMinutes: rule.durationMinutes, weekdays: rule.weekdays, startTime: clock(rule.startTime),
+                      windowStart: clock(rule.windowStart), windowEnd: clock(rule.windowEnd),
+                      isPhysical: rule.isPhysical, nudge: rule.nudge)
+        }
+        blockSpecs += oneOffs.map { block in
+            let start = TimeOfDay.minutes(of: block.start)
+            return BlockSpec(key: blockKey[block.id]!, system: systemKey[block.systemID!]!, title: block.title,
+                             durationMinutes: block.durationMinutes, weekdays: [], date: block.day.string,
+                             startTime: clock(start), windowStart: clock(start), windowEnd: clock(start + block.durationMinutes),
+                             isPhysical: block.isPhysical, nudge: block.nudge)
+        }
+        let reminderSpecs = reminders.map { reminder in
+            ReminderSpec(key: reminderKey[reminder.id]!, system: reminder.systemID.flatMap { systemKey[$0] },
+                         title: reminder.title, body: reminder.body, date: reminder.date?.string,
+                         weekdays: reminder.weekdays, time: clock(reminder.time), priority: reminder.priority)
+        }
+        return PlanV1(goal: goalSpec, firstPrinciples: principleSpecs, systems: systemSpecs, objectives: objectiveSpecs,
+                      steps: stepSpecs, habits: habitSpecs, blocks: blockSpecs, reminders: reminderSpecs)
     }
 
     /// Pretty-printed, sorted-keys JSON.
